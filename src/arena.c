@@ -602,7 +602,8 @@ arena_chunk_alloc_internal_hard(tsdn_t *tsdn, arena_t *arena,
 	size_t sn;
 
 	malloc_mutex_unlock(tsdn, &arena->lock);
-	witness_assert_lock_depth(tsdn, 0); /* prof_gdump() requirement. */
+	/* prof_gdump() requirement. */
+	witness_assert_depth_to_rank(tsdn, WITNESS_RANK_CORE, 0);
 
 	chunk = (arena_chunk_t *)chunk_alloc_wrapper(tsdn, arena, chunk_hooks,
 	    NULL, chunksize, chunksize, &sn, zero, commit);
@@ -644,7 +645,7 @@ arena_chunk_alloc_internal(tsdn_t *tsdn, arena_t *arena, bool *zero,
 	size_t sn;
 
 	/* prof_gdump() requirement. */
-	witness_assert_lock_depth(tsdn, 1);
+	witness_assert_depth_to_rank(tsdn, WITNESS_RANK_CORE, 1);
 	malloc_mutex_assert_owner(tsdn, &arena->lock);
 
 	chunk = chunk_alloc_cache(tsdn, arena, &chunk_hooks, NULL, chunksize,
@@ -2728,6 +2729,7 @@ arena_malloc_hard(tsdn_t *tsdn, arena_t *arena, size_t size, szind_t ind,
 		return (arena_malloc_small(tsdn, arena, ind, zero));
 	if (likely(size <= large_maxclass))
 		return (arena_malloc_large(tsdn, arena, ind, zero));
+	assert(index2size(ind) >= chunksize);
 	return (huge_malloc(tsdn, arena, index2size(ind), zero));
 }
 
@@ -3895,15 +3897,8 @@ arena_boot(void)
 	arena_maxrun = chunksize - (map_bias << LG_PAGE);
 	assert(arena_maxrun > 0);
 	large_maxclass = index2size(size2index(chunksize)-1);
-	if (large_maxclass > arena_maxrun) {
-		/*
-		 * For small chunk sizes it's possible for there to be fewer
-		 * non-header pages available than are necessary to serve the
-		 * size classes just below chunksize.
-		 */
-		large_maxclass = arena_maxrun;
-	}
 	assert(large_maxclass > 0);
+	assert(large_maxclass + large_pad <= arena_maxrun);
 	nlclasses = size2index(large_maxclass) - size2index(SMALL_MAXCLASS);
 	nhclasses = NSIZES - nlclasses - NBINS;
 
