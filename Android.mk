@@ -16,9 +16,15 @@
 
 LOCAL_PATH := $(call my-dir)
 
+LOCAL_SDCLANG_LTO := true
+LOCAL_SDCLANG_LTO_LDFLAGS := -O3 -funroll-loops
+LOCAL_FDO_SUPPORT := true
+
 jemalloc_common_cflags := \
-	-std=gnu99 \
+	-std=gnu11 \
 	-D_REENTRANT \
+	-O3 \
+	-funroll-loops \
 	-fvisibility=hidden \
 	-Wno-unused-parameter \
 	-Wno-type-limits \
@@ -42,23 +48,37 @@ jemalloc_common_cflags := \
 #     1 << XX is the default chunk size used by the system. Decreasing this
 #     usually decreases the amount of PSS used, but can increase
 #     fragmentation.
-jemalloc_common_cflags += \
-	-DANDROID_LG_TCACHE_MAXCLASS_DEFAULT=16 \
 
-ifeq ($(MALLOC_SVELTE),true)
-# Use a single arena on svelte devices to keep the PSS consumption as low
-# as possible.
+# Default to a single arena for svelte configurations to minimize
+# PSS consumed by jemalloc.
 jemalloc_common_cflags += \
 	-DANDROID_MAX_ARENAS=1 \
+	-DANDROID_LG_TCACHE_MAXCLASS_DEFAULT=16 \
 
-else
 # Only enable the tcache on non-svelte configurations, to save PSS.
+ifneq ($(MALLOC_SVELTE),true)
 jemalloc_common_cflags += \
+	-UANDROID_MAX_ARENAS \
 	-DANDROID_MAX_ARENAS=2 \
 	-DJEMALLOC_TCACHE \
 	-DANDROID_TCACHE_NSLOTS_SMALL_MAX=8 \
 	-DANDROID_TCACHE_NSLOTS_LARGE=16 \
 
+endif
+
+# Enable Jemalloc THP support if the target
+# specifies that its kernel supports THP.
+ifeq ($(TARGET_SUPPORTS_THP),true)
+  jemalloc_common_cflags += -DJEMALLOC_THP
+  jemalloc_common_cflags += -DJEMALLOC_HAVE_MADVISE_HUGE
+endif
+
+# Enable Jemalloc MADVISE_FREE usage if
+# the target specifies that its kernel supports
+# MADVISE_FREE. This enables the lazy page
+# purge feature.
+ifeq ($(TARGET_SUPPORTS_MADVISE_FREE),true)
+  jemalloc_common_cflags += -DJEMALLOC_PURGE_MADVISE_FREE
 endif
 
 # Use a 512K chunk size on 32 bit systems.
@@ -98,11 +118,13 @@ jemalloc_lib_src_files := \
 	src/prof.c \
 	src/quarantine.c \
 	src/rtree.c \
+        src/spin.c \
 	src/stats.c \
 	src/tcache.c \
 	src/ticker.c \
 	src/tsd.c \
 	src/util.c \
+	src/witness.c \
 
 #-----------------------------------------------------------------------
 # jemalloc static library
@@ -207,10 +229,13 @@ include $(BUILD_STATIC_LIBRARY)
 # jemalloc unit tests
 #-----------------------------------------------------------------------
 jemalloc_unit_tests := \
+	test/unit/a0.c \
+	test/unit/arena_reset.c \
 	test/unit/atomic.c \
 	test/unit/bitmap.c \
 	test/unit/ckh.c \
 	test/unit/decay.c \
+	test/unit/fork.c \
 	test/unit/hash.c \
 	test/unit/junk.c \
 	test/unit/junk_alloc.c \
@@ -221,6 +246,8 @@ jemalloc_unit_tests := \
 	test/unit/mq.c \
 	test/unit/mtx.c \
 	test/unit/nstime.c \
+	test/unit/pack.c \
+	test/unit/pages.c \
 	test/unit/prng.c \
 	test/unit/prof_accum.c \
 	test/unit/prof_active.c \
@@ -241,6 +268,7 @@ jemalloc_unit_tests := \
 	test/unit/ticker.c \
 	test/unit/tsd.c \
 	test/unit/util.c \
+	test/unit/witness.c \
 	test/unit/zero.c \
 
 $(foreach test,$(jemalloc_unit_tests), \
